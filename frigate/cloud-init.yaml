@@ -1,0 +1,279 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - openssh-server
+  - systemd-resolved
+  - apt-transport-https
+  - curl
+  - ca-certificates
+  - gnupg
+
+users:
+  - name: hung
+    groups: sudo
+    shell: /bin/bash
+    sudo: 'ALL=(ALL) NOPASSWD:ALL'
+    ssh_authorized_keys:
+      - <YOUR_SSH_PUBLIC_KEY>
+
+write_files:
+  - path: /etc/systemd/resolved.conf.d/public-dns.conf
+    content: |
+      [Resolve]
+      DNS=1.1.1.1 9.9.9.9
+      FallbackDNS=8.8.8.8 8.8.4.4
+      DNSStubListener=yes
+      Domains=~.
+
+runcmd:
+  - mkdir -p /etc/systemd/resolved.conf.d
+  - ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  - systemctl enable systemd-networkd
+  - systemctl start systemd-networkd
+  - systemctl enable systemd-resolved
+  - systemctl start systemd-resolved
+  - systemctl enable ssh
+  - systemctl start ssh
+
+  # Install Docker via official repo
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - chmod a+r /etc/apt/keyrings/docker.gpg
+  - echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian trixie stable" | tee /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - systemctl enable docker
+  - systemctl start docker
+
+  # Install Tailscale
+  - curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg > /dev/null
+  - curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list
+  - apt-get update
+  - apt-get install -y tailscale
+  - systemctl enable tailscaled
+  - systemctl start tailscaled
+
+  # Write Frigate compose
+  - mkdir -p /opt/frigate/config
+  - |
+    tee /opt/frigate/compose.yaml << 'COMPOSEEOF'
+    services:
+      frigate:
+        container_name: frigate
+        image: ghcr.io/blakeblackshear/frigate:stable
+        shm_size: "256mb"
+        cap_add:
+          - NET_RAW
+          - NET_ADMIN
+        group_add:
+          - "991"
+        environment:
+          - LIBVA_DRIVER_NAME=iHD
+          - TZ=Asia/Ho_Chi_Minh
+          - FRIGATE_RTSP_PASSWORD=${frigate_rtsp_password}
+        network_mode: host
+        devices:
+          - /dev/dri:/dev/dri
+        volumes:
+          - /opt/frigate/config:/config
+          - /srv/recordings:/media/frigate
+          - type: tmpfs
+            target: /tmp/cache
+            tmpfs:
+              size: 1000000000
+        stop_grace_period: 30s
+        restart: unless-stopped
+    COMPOSEEOF
+
+  # Write Frigate config
+  - |
+    tee /opt/frigate/config/config.yml << 'CONFIGEOF'
+    ui:
+      timezone: Asia/Ho_Chi_Minh
+
+    auth:
+      enabled: false
+
+    proxy:
+      auth_secret: ${proxy_auth_secret}
+      header_map:
+        user: remote-user
+        role: remote-groups
+        role_map:
+          admin:
+            - admins
+          viewer:
+            - cctv-viewer
+      default_role: viewer
+      logout_url: https://auth.fieldandrecord.com/logout?rd=https%3A%2F%2Fcctv.fieldandrecord.com
+
+    tls:
+      enabled: false
+
+    networking:
+      ipv6:
+        enabled: true
+
+    mqtt:
+      enabled: false
+
+    ffmpeg:
+      apple_compatibility: true
+
+    telemetry:
+      stats:
+        intel_gpu_stats: false
+
+    detectors:
+      ov:
+        type: openvino
+        device: GPU
+
+    model:
+      width: 300
+      height: 300
+      input_tensor: nhwc
+      input_pixel_format: bgr
+      path: /openvino-model/ssdlite_mobilenet_v2.xml
+      labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+
+    go2rtc:
+      streams:
+        yoosee_front_main:
+          - rtsp://admin:${rtsp_yoosee_password}@192.168.100.78:554/onvif1
+        yoosee_front_sub:
+          - rtsp://admin:${rtsp_yoosee_password}@192.168.100.78:554/onvif2
+        nha_bo_lam_main:
+          - rtsp://admin:${rtsp_nha_bo_lam_1}@192.168.100.85:554/h264/ch1/main/av_stream
+        nha_bo_lam_sub:
+          - rtsp://admin:${rtsp_nha_bo_lam_1}@192.168.100.85:554/h264/ch1/sub/av_stream
+        nha_bo_lam_2_main:
+          - rtsp://admin:${rtsp_nha_bo_lam_2}@192.168.100.129:554/h264/ch1/main/av_stream
+        nha_bo_lam_2_sub:
+          - rtsp://admin:${rtsp_nha_bo_lam_2}@192.168.100.129:554/h264/ch1/sub/av_stream
+
+    cameras:
+      yoosee_front_main:
+        live:
+          streams:
+            Main: yoosee_front_sub
+        ffmpeg:
+          inputs:
+            - path: rtsp://127.0.0.1:8554/yoosee_front_main
+              input_args: preset-rtsp-restream
+              roles:
+                - record
+            - path: rtsp://127.0.0.1:8554/yoosee_front_sub
+              input_args: preset-rtsp-restream
+              roles:
+                - detect
+        detect:
+          enabled: true
+          width: 640
+          height: 720
+          fps: 5
+        motion:
+          mask:
+            - 0,0.036,0.315,0.036,0.32,0,0,0
+            - 0,0.533,0.306,0.53,0.306,0.502,0,0.502
+          threshold: 60
+          contour_area: 41
+          improve_contrast: true
+        notifications:
+          enabled: true
+      nha_bo_lam_main:
+        enabled: true
+        ffmpeg:
+          hwaccel_args: []
+          inputs:
+            - path: rtsp://127.0.0.1:8554/nha_bo_lam_main
+              input_args: preset-rtsp-restream
+              roles:
+                - record
+            - path: rtsp://127.0.0.1:8554/nha_bo_lam_sub
+              input_args: preset-rtsp-restream
+              roles:
+                - detect
+        live:
+          streams:
+            Main: nha_bo_lam_sub
+        detect:
+          enabled: true
+          width: 512
+          height: 288
+        motion:
+          threshold: 60
+          contour_area: 40
+          improve_contrast: true
+          mask:
+            - 0.003,0.918,0.356,0.913,0.359,0.998,0.003,0.996
+            - 0,0.091,0.322,0.082,0.323,0,0,0
+        notifications:
+          enabled: true
+      nha_bo_lam_2_main:
+        enabled: true
+        ffmpeg:
+          hwaccel_args: []
+          inputs:
+            - path: rtsp://127.0.0.1:8554/nha_bo_lam_2_main
+              input_args: preset-rtsp-restream
+              roles:
+                - record
+            - path: rtsp://127.0.0.1:8554/nha_bo_lam_2_sub
+              input_args: preset-rtsp-restream
+              roles:
+                - detect
+        live:
+          streams:
+            Main: nha_bo_lam_2_sub
+        detect:
+          enabled: true
+          width: 512
+          height: 288
+        motion:
+          threshold: 50
+          contour_area: 30
+          improve_contrast: true
+          mask: 0.003,0.918,0.356,0.913,0.359,0.998,0.003,0.996
+        notifications:
+          enabled: true
+
+    record:
+      enabled: true
+      continuous:
+        days: 3
+      motion:
+        days: 7
+      alerts:
+        retain:
+          days: 30
+          mode: all
+      detections:
+        retain:
+          days: 30
+          mode: all
+
+    snapshots:
+      enabled: true
+      retain:
+        default: 7
+
+    version: 0.17-0
+
+    notifications:
+      enabled: true
+      email: admin@fieldandrecord.com
+
+    camera_groups:
+      Nhà_bố_Lâm:
+        order: 1
+        icon: LuBaby
+        cameras:
+          - yoosee_front_main
+          - nha_bo_lam_main
+          - nha_bo_lam_2_main
+    CONFIGEOF
+
+  # Start Frigate
+  - cd /opt/frigate && docker compose up -d
