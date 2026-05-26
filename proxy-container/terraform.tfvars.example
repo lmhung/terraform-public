@@ -1,0 +1,7 @@
+# Dell Inspiron
+remote           = "your-incus-remote"
+parent_iface     = "enp3s0"
+container_ip     = "192.168.100.X/24"
+gateway_ip       = "192.168.100.1"
+docker_host_ip   = "192.168.100.X"
+cloudflare_token = "your-cloudflare-api-token"
