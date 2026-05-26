@@ -6,10 +6,8 @@ Terraform configurations for managing [Incus](https://linuxcontainers.org/incus/
 
 | Module | Type | Description |
 |--------|------|-------------|
-| `adguard-container` | LXC container | AdGuard Home DNS/ad-blocking, connected via WireGuard |
 | `docker-host` | VM (macvlan) | Main Docker host VM with bridged LAN networking |
 | `frigate` | LXC container | Frigate NVR with Intel GPU passthrough |
-| `owntracks` | LXC container | OwnTracks recorder, connected via WireGuard |
 | `proxy-container` | LXC container | Caddy layer-4 reverse proxy + ddclient for Cloudflare DDNS |
 
 ## Prerequisites
