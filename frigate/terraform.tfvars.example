@@ -1,0 +1,14 @@
+remote            = "your-incus-remote"
+parent_iface      = "enp3s0"
+mac_address       = "XX:XX:XX:XX:XX:XX"
+gpu_pci           = "0000:00:02.0"
+cpu_limit         = "1"
+memory_limit      = "2GiB"
+recordings_source = "/path/to/frigate-recordings"
+
+# Secrets — fill in before apply (do NOT commit the real terraform.tfvars)
+frigate_rtsp_password = "change-me"
+proxy_auth_secret     = "change-me"
+rtsp_yoosee_password  = "change-me"
+rtsp_nha_bo_lam_1     = "change-me"
+rtsp_nha_bo_lam_2     = "change-me"
